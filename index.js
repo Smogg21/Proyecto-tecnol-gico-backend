@@ -32,6 +32,73 @@ app.get('/api/productos', async (req, res) => {
   }
 });
 
+app.post('/api/productos', async (req, res) => {
+  try {
+    const { Nombre, Descripcion, IdCategoria, StockMinimo, StockMaximo } = req.body;
+
+    // Validaciones básicas
+    if (!Nombre || !IdCategoria || StockMinimo === undefined || StockMaximo === undefined) {
+      return res.status(400).json({ message: 'Los campos "Nombre", "IdCategoria", "StockMinimo" y "StockMaximo" son obligatorios.' });
+    }
+
+    // Validar tipos y valores
+    if (typeof Nombre !== 'string' || Nombre.trim() === '') {
+      return res.status(400).json({ message: 'El campo "Nombre" debe ser una cadena de texto no vacía.' });
+    }
+
+    if (Descripcion && typeof Descripcion !== 'string') {
+      return res.status(400).json({ message: 'El campo "Descripcion" debe ser una cadena de texto.' });
+    }
+
+    const stockMinimoInt = parseInt(StockMinimo, 10);
+    const stockMaximoInt = parseInt(StockMaximo, 10);
+
+    if (isNaN(stockMinimoInt) || stockMinimoInt < 0) {
+      return res.status(400).json({ message: 'El campo "StockMinimo" debe ser un número entero no negativo.' });
+    }
+
+    if (isNaN(stockMaximoInt) || stockMaximoInt < stockMinimoInt) {
+      return res.status(400).json({ message: 'El campo "StockMaximo" debe ser un número entero mayor o igual a "StockMinimo".' });
+    }
+
+    let pool = await sql.connect(config);
+
+    // Consulta INSERT con parámetros para prevenir inyección SQL
+    const insertQuery = `
+      INSERT INTO Productos (Nombre, Descripcion, IdCategoria, StockMinimo, StockMaximo)
+      VALUES (@Nombre, @Descripcion, @IdCategoria, @StockMinimo, @StockMaximo)
+      SELECT SCOPE_IDENTITY() AS IdProducto
+    `;
+
+    let request = pool.request();
+    request.input('Nombre', sql.NVarChar(100), Nombre);
+    request.input('Descripcion', sql.NVarChar(255), Descripcion || null);
+    request.input('IdCategoria', sql.Int, IdCategoria);
+    request.input('StockMinimo', sql.Int, stockMinimoInt);
+    request.input('StockMaximo', sql.Int, stockMaximoInt);
+
+    let result = await request.query(insertQuery);
+
+    // Enviar de vuelta el IdProducto creado
+    res.status(201).json({ IdProducto: result.recordset[0].IdProducto });
+  } catch (err) {
+    console.error('SQL error', err);
+    res.status(500).send('Error del servidor');
+  }
+});
+
+
+app.get('/api/categorias', async (req, res) => {
+  try {
+    let pool = await sql.connect(config);
+    let result = await pool.request().query("SELECT * FROM Categorias");
+    res.json(result.recordset);
+  } catch (err) {
+    console.error('SQL error', err);
+    res.status(500).send('Error del servidor');
+  }
+});
+
 // Endpoint para obtener lotes
 app.get('/api/lotes', async (req, res) => {
   try {
