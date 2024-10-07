@@ -98,7 +98,16 @@ app.get('/api/categorias', async (req, res) => {
     res.status(500).send('Error del servidor');
   }
 });
-
+app.get('/api/movimientosInventario', async (req, res) => {
+  try {
+    let pool = await sql.connect(config);
+    let result = await pool.request().query("SELECT * FROM vw_Movimientos");
+    res.json(result.recordset);
+  } catch (err) {
+    console.error('SQL error', err);
+    res.status(500).send('Error del servidor');
+  }
+});
 // Endpoint para obtener lotes
 app.get('/api/lotes', async (req, res) => {
   try {
@@ -154,6 +163,66 @@ app.post('/api/lotes', async (req, res) => {
     res.status(500).send('Error del servidor');
   }
 });
+
+// Endpoint para registrar un movimiento de inventario
+app.post('/api/movimientos', async (req, res) => {
+  try {
+    const { IdLote, TipoMovimiento, Cantidad, Notas, IdUsuario } = req.body;
+
+    // Validaciones básicas
+    if (!IdLote || !TipoMovimiento || !Cantidad || !IdUsuario) {
+      return res.status(400).json({ message: 'Los campos "IdLote", "TipoMovimiento", "Cantidad" e "IdUsuario" son obligatorios.' });
+    }
+
+    // Validar TipoMovimiento
+    if (TipoMovimiento !== 'Entrada' && TipoMovimiento !== 'Salida') {
+      return res.status(400).json({ message: 'El campo "TipoMovimiento" debe ser "Entrada" o "Salida".' });
+    }
+
+    // Validar Cantidad
+    const cantidadInt = parseInt(Cantidad, 10);
+    if (isNaN(cantidadInt) || cantidadInt <= 0) {
+      return res.status(400).json({ message: 'El campo "Cantidad" debe ser un número entero positivo.' });
+    }
+
+    let pool = await sql.connect(config);
+
+    // Verificar si el IdLote existe
+    let loteResult = await pool.request()
+      .input('IdLote', sql.Int, IdLote)
+      .query('SELECT * FROM Lotes WHERE IdLote = @IdLote');
+
+    if (loteResult.recordset.length === 0) {
+      return res.status(404).json({ message: 'El lote especificado no existe.' });
+    }
+
+    // Insertar el movimiento
+    const insertQuery = `
+      INSERT INTO MovimientosInventario (IdLote, TipoMovimiento, Cantidad, Notas, IdUsuario)
+      VALUES (@IdLote, @TipoMovimiento, @Cantidad, @Notas, @IdUsuario)
+      SELECT SCOPE_IDENTITY() AS IdMovimiento
+    `;
+
+    let request = pool.request();
+    request.input('IdLote', sql.Int, IdLote);
+    request.input('TipoMovimiento', sql.NVarChar(10), TipoMovimiento);
+    request.input('Cantidad', sql.Int, cantidadInt);
+    request.input('Notas', sql.NVarChar(255), Notas || null);
+    request.input('IdUsuario', sql.Int, IdUsuario);
+
+    let result = await request.query(insertQuery);
+
+    res.status(201).json({ IdMovimiento: result.recordset[0].IdMovimiento });
+  } catch (err) {
+    console.error('SQL error', err);
+    if (err.originalError && err.originalError.info && err.originalError.info.number === 50000) {
+      // Error personalizado desde SQL Server
+      return res.status(400).json({ message: err.originalError.info.message });
+    }
+    res.status(500).send('Error del servidor');
+  }
+});
+
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
