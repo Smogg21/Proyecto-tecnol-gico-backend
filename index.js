@@ -1,6 +1,8 @@
 const express = require('express');
 const sql = require('mssql');
 const cors = require('cors');
+const jwt = require('jsonwebtoken');
+const bcrypt = require('bcrypt');
 require('dotenv').config();
 
 
@@ -222,6 +224,71 @@ app.post('/api/movimientos', async (req, res) => {
     res.status(500).send('Error del servidor');
   }
 });
+
+
+// Endpoint de inicio de sesión
+app.post('/api/login', async (req, res) => {
+  try {
+    const { Usuario, Contraseña } = req.body;
+
+    // Validar entrada
+    if (!Usuario || !Contraseña) {
+      return res.status(400).json({ message: 'El nombre de usuario y la contraseña son obligatorios.' });
+    }
+
+    let pool = await sql.connect(config);
+    let request = pool.request();
+
+    request.input('Usuario', sql.NVarChar(50), Usuario);
+
+    // Obtener Usuario por usuario
+    let result = await request.query('SELECT * FROM Usuarios WHERE Usuario = @Usuario');
+
+    if (result.recordset.length === 0) {
+      return res.status(401).json({ message: 'Credenciales inválidas.' });
+    }
+
+    const user = result.recordset[0];
+
+    // Comparar contraseñas
+    const match = await bcrypt.compare(Contraseña, user.Contraseña);
+
+    if (!match) {
+      return res.status(401).json({ message: 'Credenciales inválidas.' });
+    }
+
+    // Generar token JWT
+    const token = jwt.sign(
+      { IdUsuario: user.IdUsuario, Usuario: user.Usuario, IdRol: user.IdRol },
+      process.env.JWT_SECRET,
+      { expiresIn: '1h' }
+    );
+
+    res.json({ token });
+  } catch (err) {
+    console.error('Error en login', err);
+    res.status(500).send('Error del servidor');
+  }
+});
+
+
+// Middleware de autenticación
+function authenticateToken(req, res, next) {
+  const authHeader = req.headers['authorization'];
+  const token = authHeader && authHeader.split(' ')[1]; // Formato: "Bearer TOKEN"
+
+  if (!token) {
+    return res.status(401).json({ message: 'Token no proporcionado.' });
+  }
+
+  jwt.verify(token, process.env.JWT_SECRET, (err, user) => {
+    if (err) {
+      return res.status(403).json({ message: 'Token inválido.' });
+    }
+    req.user = user;
+    next();
+  });
+}
 
 
 const PORT = process.env.PORT || 5000;
