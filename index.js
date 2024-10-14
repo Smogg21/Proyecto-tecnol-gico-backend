@@ -125,7 +125,7 @@ app.get('/api/lotes', async (req, res) => {
 // **Nuevo Endpoint para Insertar un Lote**
 app.post('/api/lotes', async (req, res) => {
   try {
-    const { producto, fechaCaducidad, fechaEntrada, cantidad, notas } = req.body;
+    const { producto, fechaCaducidad, fechaEntrada, cantidad, notas, idUsuario } = req.body;
 
     // Validaciones básicas
     if (!producto || !cantidad) {
@@ -143,8 +143,8 @@ app.post('/api/lotes', async (req, res) => {
 
     // Consulta INSERT con parámetros para prevenir inyección SQL
     const insertQuery = `
-      INSERT INTO Lotes (IdProducto, FechaCaducidad, FechaEntrada, CantidadInicial, CantidadActual, Notas)
-      VALUES (@IdProducto, @FechaCaducidad, @FechaEntrada, @CantidadInicial, @CantidadActual, @Notas)
+      INSERT INTO Lotes (IdProducto, FechaCaducidad, FechaEntrada, CantidadInicial, CantidadActual, Notas, IdUsuario)
+      VALUES (@IdProducto, @FechaCaducidad, @FechaEntrada, @CantidadInicial, @CantidadActual, @Notas, @IdUsuario)
       SELECT SCOPE_IDENTITY() AS IdLote
     `;
 
@@ -155,6 +155,7 @@ app.post('/api/lotes', async (req, res) => {
     request.input('CantidadInicial', sql.Int, cantidadInt);
     request.input('CantidadActual', sql.Int, cantidadInt); // CantidadActual igual a CantidadInicial
     request.input('Notas', sql.NVarChar(255), notas || null);
+    request.input('IdUsuario', sql.Int, idUsuario);
 
     let result = await request.query(insertQuery);
 
