@@ -272,6 +272,49 @@ app.post('/api/login', async (req, res) => {
   }
 });
 
+// Endpoint para restablecer contraseña
+app.post('/api/restablecerPassword', async (req, res) => {
+  try {
+    const { Usuario, NuevaContraseña } = req.body;
+
+    // Validar entrada
+    if (!Usuario || !NuevaContraseña) {
+      return res.status(400).json({ message: 'El nombre de usuario y la nueva contraseña son obligatorios.' });
+    }
+
+    let pool = await sql.connect(config);
+    let request = pool.request();
+
+    request.input('Usuario', sql.NVarChar(50), Usuario);
+
+    // Verificar si el usuario existe
+    let result = await request.query('SELECT * FROM Usuarios WHERE Usuario = @Usuario');
+
+    if (result.recordset.length === 0) {
+      return res.status(404).json({ message: 'El usuario especificado no existe.' });
+    }
+
+
+    // Hash de la nueva contraseña
+    const saltRounds = 10;
+    const hashedPassword = await bcrypt.hash(NuevaContraseña, saltRounds);
+
+    // Actualizar la contraseña en la base de datos
+    await pool.request()
+      .input('Contraseña', sql.NVarChar(255), hashedPassword)
+      .input('Usuario', sql.NVarChar(50), Usuario)
+      .query('UPDATE Usuarios SET Contraseña = @Contraseña WHERE Usuario = @Usuario');
+
+    res.json({ message: 'Contraseña restablecida correctamente.' });
+
+  } catch (err) {
+    console.error('Error al restablecer la contraseña', err);
+    res.status(500).send('Error del servidor');
+  }
+});
+
+
+
 
 // Middleware de autenticación
 function authenticateToken(req, res, next) {
