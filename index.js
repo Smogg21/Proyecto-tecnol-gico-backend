@@ -315,7 +315,28 @@ app.post('/api/movimientos', async (req, res) => {
       if (cantidadInt !== 1) {
         return res.status(400).json({ message: 'La cantidad para productos con número de serie debe ser 1.' });
       }
-    }
+    } else {
+      // Validaciones para productos sin número de serie
+      if (TipoMovimiento === 'Salida') {
+          // Verificar que la cantidad no sea mayor a CantidadActual del lote
+          if (cantidadInt > lote.CantidadActual) {
+              return res.status(400).json({ message: 'La cantidad no puede ser mayor que la cantidad actual del lote.' });
+          }
+      } else if (TipoMovimiento === 'Entrada') {
+          // Calcular la cantidad que ha salido del lote
+          const cantidadQueHaSalido = lote.CantidadInicial - lote.CantidadActual;
+  
+          // Verificar que haya productos para devolver
+          if (cantidadQueHaSalido <= 0) {
+              return res.status(400).json({ message: 'No hay productos para devolver en este lote.' });
+          }
+  
+          // Verificar que la cantidad no sea mayor a la cantidad que ha salido
+          if (cantidadInt > cantidadQueHaSalido) {
+              return res.status(400).json({ message: 'La cantidad no puede ser mayor que la cantidad que ha salido del lote.' });
+          }
+      }
+  }
 
     // Insertar el movimiento en MovimientosInventario
     const insertMovimientoQuery = `
