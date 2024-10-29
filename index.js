@@ -269,7 +269,7 @@ app.post('/api/movimientos', async (req, res) => {
     let loteResult = await pool.request()
       .input('IdLote', sql.Int, IdLote)
       .query(`
-        SELECT l.*, p.HasNumSerie
+        SELECT l.*, p.HasNumSerie, l.CantidadActual, l.CantidadInicial
         FROM Lotes l
         INNER JOIN Productos p ON l.IdProducto = p.IdProducto
         WHERE l.IdLote = @IdLote
