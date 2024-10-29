@@ -126,15 +126,25 @@ app.get('/api/lotes', async (req, res) => {
 // Endpoint para obtener los números de serie de un lote
 app.get('/api/lotes/:idLote/serial-numbers', async (req, res) => {
   const { idLote } = req.params;
+  const { estado } = req.query; // Obtener el estado desde los parámetros de consulta
+
   try {
     let pool = await sql.connect(config);
-    let result = await pool.request()
-      .input('IdLote', sql.Int, idLote)
-      .query(`
-        SELECT NumSerie
-        FROM DetalleProducto
-        WHERE IdLote = @IdLote AND Estado = 'Activo'
-      `);
+    let request = pool.request().input('IdLote', sql.Int, idLote);
+
+    let query = `
+      SELECT NumSerie
+      FROM DetalleProducto
+      WHERE IdLote = @IdLote
+    `;
+
+    // Si se proporciona el estado, agregar condición al query
+    if (estado) {
+      query += ` AND Estado = @Estado`;
+      request.input('Estado', sql.NVarChar(50), estado);
+    }
+
+    let result = await request.query(query);
     res.json(result.recordset);
   } catch (err) {
     console.error('SQL error', err);
@@ -233,6 +243,7 @@ app.post('/api/lotes', async (req, res) => {
 // Endpoint para registrar un movimiento de inventario
 app.post('/api/movimientos', async (req, res) => {
   try {
+    // Extraer campos del cuerpo de la solicitud
     const { IdLote, TipoMovimiento, Cantidad, Notas, IdUsuario, NumSerie } = req.body;
 
     // Validaciones básicas
@@ -248,12 +259,13 @@ app.post('/api/movimientos', async (req, res) => {
     // Validar Cantidad
     const cantidadInt = parseInt(Cantidad, 10);
     if (isNaN(cantidadInt) || cantidadInt <= 0) {
-      return res.status(400).json({ message: 'El campo "Cantidad" debe ser un número entero positivo.' });
+      return res.status(400).json({ message: 'La cantidad debe ser un número entero positivo.' });
     }
 
+    // Conectar a la base de datos
     let pool = await sql.connect(config);
 
-    // Verificar si el IdLote existe y obtener HasNumSerie
+    // Obtener el lote y verificar si el producto tiene número de serie
     let loteResult = await pool.request()
       .input('IdLote', sql.Int, IdLote)
       .query(`
@@ -267,24 +279,36 @@ app.post('/api/movimientos', async (req, res) => {
       return res.status(404).json({ message: 'El lote especificado no existe.' });
     }
 
-    const hasNumSerie = loteResult.recordset[0].HasNumSerie;
+    const lote = loteResult.recordset[0];
+    const hasNumSerie = lote.HasNumSerie;
 
-    if (hasNumSerie && !NumSerie) {
-      return res.status(400).json({ message: 'Debe proporcionar el número de serie para este producto.' });
-    }
-
+    // Si el producto maneja números de serie, realizar validaciones adicionales
     if (hasNumSerie) {
-      // Validar que el número de serie pertenece al lote y está activo
+      // Validar que NumSerie esté proporcionado
+      if (!NumSerie) {
+        return res.status(400).json({ message: 'Debe proporcionar el número de serie para este producto.' });
+      }
+
+      // Dependiendo del TipoMovimiento, establecer el estado esperado
+      let estadoEsperado;
+      if (TipoMovimiento === 'Salida') {
+        estadoEsperado = 'Activo';
+      } else if (TipoMovimiento === 'Entrada') {
+        estadoEsperado = 'Inactivo';
+      }
+
+      // Verificar que el número de serie exista, pertenezca al lote y tenga el estado esperado
       let serialResult = await pool.request()
         .input('NumSerie', sql.NVarChar(30), NumSerie)
         .input('IdLote', sql.Int, IdLote)
+        .input('Estado', sql.NVarChar(50), estadoEsperado)
         .query(`
           SELECT * FROM DetalleProducto
-          WHERE NumSerie = @NumSerie AND IdLote = @IdLote AND Estado = 'Activo'
+          WHERE NumSerie = @NumSerie AND IdLote = @IdLote AND Estado = @Estado
         `);
 
       if (serialResult.recordset.length === 0) {
-        return res.status(400).json({ message: 'El número de serie no es válido o no pertenece al lote seleccionado.' });
+        return res.status(400).json({ message: `El número de serie no está disponible para ${TipoMovimiento.toLowerCase()}.` });
       }
 
       // Para productos con número de serie, la cantidad debe ser 1
@@ -293,53 +317,48 @@ app.post('/api/movimientos', async (req, res) => {
       }
     }
 
-    // Insertar el movimiento
-    const insertQuery = `
+    // Insertar el movimiento en MovimientosInventario
+    const insertMovimientoQuery = `
       INSERT INTO MovimientosInventario (IdLote, TipoMovimiento, Cantidad, Notas, IdUsuario, NumSerie)
       VALUES (@IdLote, @TipoMovimiento, @Cantidad, @Notas, @IdUsuario, @NumSerie)
-      SELECT SCOPE_IDENTITY() AS IdMovimiento
+      SELECT SCOPE_IDENTITY() AS IdMovimiento;
     `;
 
-    let request = pool.request();
-    request.input('IdLote', sql.Int, IdLote);
-    request.input('TipoMovimiento', sql.NVarChar(10), TipoMovimiento);
-    request.input('Cantidad', sql.Int, cantidadInt);
-    request.input('Notas', sql.NVarChar(255), Notas || null);
-    request.input('IdUsuario', sql.Int, IdUsuario);
-    request.input('NumSerie', sql.NVarChar(30), hasNumSerie ? NumSerie : null);
+    let movimientoResult = await pool.request()
+      .input('IdLote', sql.Int, IdLote)
+      .input('TipoMovimiento', sql.NVarChar(10), TipoMovimiento)
+      .input('Cantidad', sql.Int, cantidadInt)
+      .input('Notas', sql.NVarChar(255), Notas || null)
+      .input('IdUsuario', sql.Int, IdUsuario)
+      .input('NumSerie', sql.NVarChar(30), hasNumSerie ? NumSerie : null)
+      .query(insertMovimientoQuery);
 
-    let result = await request.query(insertQuery);
+    const IdMovimiento = movimientoResult.recordset[0].IdMovimiento;
 
     // Actualizar el estado del número de serie si es necesario
     if (hasNumSerie) {
-      // Si es una salida, marcar el producto como inactivo
+      let nuevoEstado;
       if (TipoMovimiento === 'Salida') {
-        await pool.request()
-          .input('NumSerie', sql.NVarChar(30), NumSerie)
-          .query(`
-            UPDATE DetalleProducto
-            SET Estado = 'Inactivo'
-            WHERE NumSerie = @NumSerie
-          `);
+        nuevoEstado = 'Inactivo';
       } else if (TipoMovimiento === 'Entrada') {
-        // En caso de entradas, asegurarse de que el producto esté activo
-        await pool.request()
-          .input('NumSerie', sql.NVarChar(30), NumSerie)
-          .query(`
-            UPDATE DetalleProducto
-            SET Estado = 'Activo'
-            WHERE NumSerie = @NumSerie
-          `);
+        nuevoEstado = 'Activo';
       }
+
+      await pool.request()
+        .input('NumSerie', sql.NVarChar(30), NumSerie)
+        .input('NuevoEstado', sql.NVarChar(50), nuevoEstado)
+        .query(`
+          UPDATE DetalleProducto
+          SET Estado = @NuevoEstado
+          WHERE NumSerie = @NumSerie
+        `);
     }
 
-    res.status(201).json({ IdMovimiento: result.recordset[0].IdMovimiento });
+    // Enviar de vuelta el IdMovimiento creado
+    res.status(201).json({ IdMovimiento });
+
   } catch (err) {
     console.error('SQL error', err);
-    if (err.originalError && err.originalError.info && err.originalError.info.number === 50000) {
-      // Error personalizado desde SQL Server
-      return res.status(400).json({ message: err.originalError.info.message });
-    }
     res.status(500).send('Error del servidor');
   }
 });
