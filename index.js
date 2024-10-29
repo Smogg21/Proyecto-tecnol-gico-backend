@@ -36,7 +36,7 @@ app.get('/api/productos', async (req, res) => {
 
 app.post('/api/productos', async (req, res) => {
   try {
-    const { Nombre, Descripcion, IdCategoria, StockMinimo, StockMaximo } = req.body;
+    const { Nombre, Descripcion, IdCategoria, StockMinimo, StockMaximo, HasNumSerie } = req.body;
 
     // Validaciones básicas
     if (!Nombre || !IdCategoria || StockMinimo === undefined || StockMaximo === undefined) {
@@ -67,8 +67,8 @@ app.post('/api/productos', async (req, res) => {
 
     // Consulta INSERT con parámetros para prevenir inyección SQL
     const insertQuery = `
-      INSERT INTO Productos (Nombre, Descripcion, IdCategoria, StockMinimo, StockMaximo)
-      VALUES (@Nombre, @Descripcion, @IdCategoria, @StockMinimo, @StockMaximo)
+      INSERT INTO Productos (Nombre, Descripcion, IdCategoria, StockMinimo, StockMaximo, HasNumSerie)
+      VALUES (@Nombre, @Descripcion, @IdCategoria, @StockMinimo, @StockMaximo, @HasNumSerie)
       SELECT SCOPE_IDENTITY() AS IdProducto
     `;
 
@@ -78,6 +78,7 @@ app.post('/api/productos', async (req, res) => {
     request.input('IdCategoria', sql.Int, IdCategoria);
     request.input('StockMinimo', sql.Int, stockMinimoInt);
     request.input('StockMaximo', sql.Int, stockMaximoInt);
+    request.input('HasNumSerie', sql.Bit, HasNumSerie);
 
     let result = await request.query(insertQuery);
 
