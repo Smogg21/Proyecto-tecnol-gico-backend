@@ -126,7 +126,7 @@ app.get('/api/lotes', async (req, res) => {
 // **Nuevo Endpoint para Insertar un Lote**
 app.post('/api/lotes', async (req, res) => {
   try {
-    const { producto, fechaCaducidad, fechaEntrada, cantidad, notas, idUsuario } = req.body;
+    const { producto, fechaCaducidad, fechaEntrada, cantidad, notas, idUsuario, serialNumbers } = req.body;
 
     // Validaciones básicas
     if (!producto || !cantidad) {
@@ -135,18 +135,32 @@ app.post('/api/lotes', async (req, res) => {
 
     // Convertir cantidad a número entero
     const cantidadInt = parseInt(cantidad, 10);
-    if (isNaN(cantidadInt) || cantidadInt < 0) {
+    if (isNaN(cantidadInt) || cantidadInt <= 0) {
       return res.status(400).json({ message: 'La cantidad debe ser un número entero positivo.' });
     }
 
     // Conectar a la base de datos
     let pool = await sql.connect(config);
 
-    // Consulta INSERT con parámetros para prevenir inyección SQL
-    const insertQuery = `
+    // Obtener HasNumSerie del producto
+    let productResult = await pool.request()
+      .input('IdProducto', sql.Int, producto)
+      .query('SELECT HasNumSerie FROM Productos WHERE IdProducto = @IdProducto');
+
+    if (productResult.recordset.length === 0) {
+      return res.status(404).json({ message: 'El producto especificado no existe.' });
+    }
+
+    const hasNumSerie = productResult.recordset[0].HasNumSerie;
+
+    // Establecer CantidadActual según HasNumSerie
+    const cantidadActual = 0;
+
+    // Insertar en Lotes
+    const insertLoteQuery = `
       INSERT INTO Lotes (IdProducto, FechaCaducidad, FechaEntrada, CantidadInicial, CantidadActual, Notas, IdUsuario)
       VALUES (@IdProducto, @FechaCaducidad, @FechaEntrada, @CantidadInicial, @CantidadActual, @Notas, @IdUsuario)
-      SELECT SCOPE_IDENTITY() AS IdLote
+      SELECT SCOPE_IDENTITY() AS IdLote;
     `;
 
     let request = pool.request();
@@ -154,17 +168,44 @@ app.post('/api/lotes', async (req, res) => {
     request.input('FechaCaducidad', sql.Date, fechaCaducidad || null);
     request.input('FechaEntrada', sql.DateTime, fechaEntrada ? new Date(fechaEntrada) : new Date());
     request.input('CantidadInicial', sql.Int, cantidadInt);
-    request.input('CantidadActual', sql.Int, cantidadInt); // CantidadActual igual a CantidadInicial
+    request.input('CantidadActual', sql.Int, cantidadActual);
     request.input('Notas', sql.NVarChar(255), notas || null);
     request.input('IdUsuario', sql.Int, idUsuario);
 
-    let result = await request.query(insertQuery);
+    let result = await request.query(insertLoteQuery);
+
+    const IdLote = result.recordset[0].IdLote;
+
+    if (hasNumSerie && serialNumbers && serialNumbers.length > 0) {
+      // Validar que la cantidad de números de serie coincide con la cantidad ingresada
+      if (serialNumbers.length !== cantidadInt) {
+        return res.status(400).json({ message: 'La cantidad de números de serie no coincide con la cantidad ingresada.' });
+      }
+
+      // Insertar los números de serie en DetalleProducto
+      for (let numSerie of serialNumbers) {
+        await pool.request()
+          .input('IdLote', sql.Int, IdLote)
+          .input('IdProducto', sql.Int, producto)
+          .input('NumSerie', sql.NVarChar(30), numSerie)
+          .query(`
+            INSERT INTO DetalleProducto (IdLote, IdProducto, NumSerie)
+            VALUES (@IdLote, @IdProducto, @NumSerie)
+          `);
+      }
+    }
 
     // Enviar de vuelta el IdLote creado
-    res.status(201).json({ IdLote: result.recordset[0].IdLote });
+    res.status(201).json({ IdLote });
+
   } catch (err) {
     console.error('SQL error', err);
-    res.status(500).send('Error del servidor');
+    // Manejo de errores de clave duplicada (número de serie repetido)
+    if (err.number === 2627 || err.number === 2601) {
+      res.status(400).json({ message: 'Uno o más números de serie ya existen en el sistema.' });
+    } else {
+      res.status(500).send('Error del servidor');
+    }
   }
 });
 
