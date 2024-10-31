@@ -567,6 +567,130 @@ app.post("/api/login", async (req, res) => {
   }
 });
 
+// Endpoint para obtener todos los usuarios (necesario para listar en el frontend)
+app.get("/api/usuarios", authenticateToken, authorizeRoles(1), async (req, res) => {
+  try {
+    let pool = await sql.connect(config);
+    let result = await pool.request().query("SELECT IdUsuario, Usuario, Nombre, ApellidoPaterno, IdRol, Estado FROM Usuarios");
+    res.json(result.recordset);
+  } catch (err) {
+    console.error("Error al obtener los usuarios", err);
+    res.status(500).json({ message: "Error en el servidor." });
+  }
+});
+
+// Endpoint para obtener un usuario por su ID
+app.get("/api/usuarios/:id", authenticateToken, authorizeRoles(1), async (req, res) => {
+  try {
+    const { id } = req.params;
+    let pool = await sql.connect(config);
+    let result = await pool.request().input("IdUsuario", sql.Int, id).query("SELECT IdUsuario, Usuario, Nombre, ApellidoPaterno, IdRol, Estado FROM Usuarios WHERE IdUsuario = @IdUsuario");
+    if (result.recordset.length === 0) {
+      return res.status(404).json({ message: "El usuario especificado no existe." });
+    }
+    res.json(result.recordset[0]);
+  } catch (err) {
+    console.error("Error al obtener el usuario", err);
+    res.status(500).json({ message: "Error en el servidor." });
+  }
+});
+
+// Endpoint para actualizar un usuario existente (actualizado para permitir modificar 'Usuario')
+app.put("/api/usuarios/:id", authenticateToken, authorizeRoles(1), async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { usuario, nombre, apellidoPaterno, IdRol, estado } = req.body;
+
+    // Validar campos requeridos
+    if (!usuario || !nombre || !apellidoPaterno || !IdRol || !estado) {
+      return res.status(400).json({ message: "Todos los campos son obligatorios." });
+    }
+
+    // Validar tipos de datos
+    if (typeof usuario !== "string" || usuario.trim() === "") {
+      return res.status(400).json({ message: 'El campo "usuario" debe ser una cadena de texto no vacía.' });
+    }
+
+    if (typeof nombre !== "string" || nombre.trim() === "") {
+      return res.status(400).json({ message: 'El campo "nombre" debe ser una cadena de texto no vacía.' });
+    }
+
+    if (typeof apellidoPaterno !== "string" || apellidoPaterno.trim() === "") {
+      return res.status(400).json({ message: 'El campo "apellidoPaterno" debe ser una cadena de texto no vacía.' });
+    }
+
+    // Validar IdRol
+    const validRoles = [1, 2, 3];
+    if (!validRoles.includes(IdRol)) {
+      return res.status(400).json({ message: "El rol especificado no es válido." });
+    }
+
+    // Validar Estado
+    const validStates = ["Activo", "Inactivo"];
+    if (!validStates.includes(estado)) {
+      return res.status(400).json({ message: "El estado especificado no es válido." });
+    }
+
+    let pool = await sql.connect(config);
+
+    // Verificar si el usuario existe
+    const userResult = await pool
+      .request()
+      .input("IdUsuario", sql.Int, id)
+      .query("SELECT * FROM Usuarios WHERE IdUsuario = @IdUsuario");
+
+    if (userResult.recordset.length === 0) {
+      return res.status(404).json({ message: "El usuario especificado no existe." });
+    }
+
+    // Verificar si el nuevo nombre de usuario ya está en uso por otro usuario
+    const usuarioExistente = await pool
+      .request()
+      .input("Usuario", sql.NVarChar(50), usuario)
+      .input("IdUsuario", sql.Int, id)
+      .query("SELECT * FROM Usuarios WHERE Usuario = @Usuario AND IdUsuario <> @IdUsuario");
+
+    if (usuarioExistente.recordset.length > 0) {
+      return res.status(400).json({ message: "El nombre de usuario ya está en uso por otro usuario." });
+    }
+
+    // Actualizar datos del usuario
+    const updateQuery = `
+      UPDATE Usuarios
+      SET Usuario = @Usuario,
+          Nombre = @Nombre,
+          ApellidoPaterno = @ApellidoPaterno,
+          IdRol = @IdRol,
+          Estado = @Estado
+      WHERE IdUsuario = @IdUsuario
+    `;
+
+    await pool
+      .request()
+      .input("IdUsuario", sql.Int, id)
+      .input("Usuario", sql.NVarChar(50), usuario)
+      .input("Nombre", sql.NVarChar(50), nombre)
+      .input("ApellidoPaterno", sql.NVarChar(50), apellidoPaterno)
+      .input("IdRol", sql.Int, IdRol)
+      .input("Estado", sql.NVarChar(10), estado)
+      .query(updateQuery);
+
+    res.status(200).json({ message: "Usuario actualizado exitosamente." });
+  } catch (err) {
+    console.error("Error al actualizar el usuario", err);
+    // Manejo de errores de clave duplicada (si el nombre de usuario ya existe)
+    if (err.number === 2627 || err.number === 2601) {
+      res.status(400).json({ message: "El nombre de usuario ya existe en el sistema." });
+    } else {
+      res.status(500).json({ message: "Error en el servidor." });
+    }
+  }
+});
+
+
+
+
+
 //Endpoint para registrar nuevo usuario
 
 app.post(
