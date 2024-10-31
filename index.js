@@ -21,6 +21,22 @@ const config = {
   },
 };
 
+function authorizeRoles(...allowedRoles) {
+  return (req, res, next) => {
+    if (!req.user) {
+      return res.status(401).json({ message: 'Usuario no autenticado.' });
+    }
+
+    const userRole = req.user.IdRol; // Asumiendo que IdRol está en el token
+
+    if (!allowedRoles.includes(userRole)) {
+      return res.status(403).json({ message: 'Acceso denegado.' });
+    }
+
+    next();
+  };
+}
+
 
 // Endpoint para obtener productos
 app.get('/api/productos', async (req, res) => {
@@ -152,7 +168,17 @@ app.get('/api/lotes/:idLote/serial-numbers', async (req, res) => {
   }
 });
 
-
+// Endpoint para obtener todos los roles
+app.get('/api/roles', authenticateToken, authorizeRoles(1), async (req, res) => {
+  try {
+    let pool = await sql.connect(config);
+    let result = await pool.request().query("SELECT * FROM Roles");
+    res.json(result.recordset);
+  } catch (err) {
+    console.error('Error al obtener los roles', err);
+    res.status(500).send('Error del servidor');
+  }
+});
 
 // **Nuevo Endpoint para Insertar un Lote**
 app.post('/api/lotes', async (req, res) => {
