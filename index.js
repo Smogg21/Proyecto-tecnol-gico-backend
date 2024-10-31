@@ -139,7 +139,20 @@ app.post("/api/productos", async (req, res) => {
   }
 });
 
+// Obtener categorías activas
 app.get("/api/categorias", async (req, res) => {
+  try {
+    let pool = await sql.connect(config);
+    let result = await pool.request().query("SELECT * FROM Categorias WHERE Estado = 'Activo'");
+    res.json(result.recordset);
+  } catch (err) {
+    console.error("SQL error", err);
+    res.status(500).send("Error del servidor");
+  }
+});
+
+// Obtener todas las categorias
+app.get("/api/categoriasTodas", authenticateToken, authorizeRoles(1), async (req, res) => {
   try {
     let pool = await sql.connect(config);
     let result = await pool.request().query("SELECT * FROM Categorias");
@@ -149,6 +162,149 @@ app.get("/api/categorias", async (req, res) => {
     res.status(500).send("Error del servidor");
   }
 });
+
+
+// Endpoint para obtener una categoría por su ID
+app.get("/api/categorias/:id", authenticateToken, authorizeRoles(1), async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    let pool = await sql.connect(config);
+
+    const result = await pool
+      .request()
+      .input("IdCategoria", sql.Int, id)
+      .query("SELECT * FROM Categorias WHERE IdCategoria = @IdCategoria");
+
+    if (result.recordset.length === 0) {
+      return res.status(404).json({ message: "La categoría especificada no existe." });
+    }
+
+    res.json(result.recordset[0]);
+  } catch (err) {
+    console.error("Error al obtener la categoría", err);
+    res.status(500).send("Error del servidor");
+  }
+});
+
+
+app.post("/api/categorias", authenticateToken, authorizeRoles(1), async (req, res) => {
+  try {
+    const { Nombre, Descripcion } = req.body;
+
+    if (!Nombre) {
+      return res.status(400).json({ message: 'El campo "Nombre" es obligatorio.' });
+    }
+
+    let pool = await sql.connect(config);
+
+    const insertQuery = `
+      INSERT INTO Categorias (Nombre, Descripcion)
+      VALUES (@Nombre, @Descripcion)
+      SELECT SCOPE_IDENTITY() AS IdCategoria
+    `;
+
+    let request = pool.request();
+    request.input("Nombre", sql.NVarChar(100), Nombre);
+    request.input("Descripcion", sql.NVarChar(255), Descripcion || null);
+
+    let result = await request.query(insertQuery);
+
+    res.status(201).json({ IdCategoria: result.recordset[0].IdCategoria });
+  } catch (err) {
+    console.error("SQL error", err);
+    res.status(500).send("Error del servidor");
+  }
+});
+
+// Endpoint para actualizar una categoría existente
+app.put("/api/categorias/:id", authenticateToken, authorizeRoles(1), async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { Nombre, Descripcion, Estado } = req.body;
+
+    if (!Nombre) {
+      return res.status(400).json({ message: 'El campo "Nombre" es obligatorio.' });
+    }
+
+    // Validar Estado
+    const validStates = ["Activo", "Inactivo"];
+    if (Estado && !validStates.includes(Estado)) {
+      return res.status(400).json({ message: "El estado especificado no es válido." });
+    }
+
+    let pool = await sql.connect(config);
+
+    // Verificar si la categoría existe
+    const categoriaExistente = await pool
+      .request()
+      .input("IdCategoria", sql.Int, id)
+      .query("SELECT * FROM Categorias WHERE IdCategoria = @IdCategoria");
+
+    if (categoriaExistente.recordset.length === 0) {
+      return res.status(404).json({ message: "La categoría especificada no existe." });
+    }
+
+    // Actualizar la categoría
+    await pool
+      .request()
+      .input("IdCategoria", sql.Int, id)
+      .input("Nombre", sql.NVarChar(100), Nombre)
+      .input("Descripcion", sql.NVarChar(255), Descripcion || null)
+      .input("Estado", sql.NVarChar(10), Estado || categoriaExistente.recordset[0].Estado)
+      .query(`
+        UPDATE Categorias
+        SET Nombre = @Nombre, Descripcion = @Descripcion, Estado = @Estado
+        WHERE IdCategoria = @IdCategoria
+      `);
+
+    res.status(200).json({ message: "Categoría actualizada exitosamente." });
+  } catch (err) {
+    console.error("Error al actualizar la categoría", err);
+    // Manejo de errores de clave duplicada (si el nombre de la categoría ya existe)
+    if (err.number === 2627 || err.number === 2601) {
+      res.status(400).json({ message: "El nombre de la categoría ya existe." });
+    } else {
+      res.status(500).send("Error del servidor");
+    }
+  }
+});
+
+// Endpoint para eliminar (desactivar) una categoría
+app.delete("/api/categorias/:id", authenticateToken, authorizeRoles(1), async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    let pool = await sql.connect(config);
+
+    // Verificar si la categoría existe
+    const categoriaExistente = await pool
+      .request()
+      .input("IdCategoria", sql.Int, id)
+      .query("SELECT * FROM Categorias WHERE IdCategoria = @IdCategoria");
+
+    if (categoriaExistente.recordset.length === 0) {
+      return res.status(404).json({ message: "La categoría especificada no existe." });
+    }
+
+    // Cambiar el estado a 'Inactivo'
+    await pool
+      .request()
+      .input("IdCategoria", sql.Int, id)
+      .query(`
+        UPDATE Categorias
+        SET Estado = 'Inactivo'
+        WHERE IdCategoria = @IdCategoria
+      `);
+
+    res.status(200).json({ message: "Categoría eliminada exitosamente." });
+  } catch (err) {
+    console.error("Error al eliminar la categoría", err);
+    res.status(500).send("Error del servidor");
+  }
+});
+
+
 app.get("/api/movimientosInventario", async (req, res) => {
   try {
     let pool = await sql.connect(config);
@@ -869,6 +1025,28 @@ app.post(
     }
   }
 );
+
+//Endpoints para Gráficas:
+
+
+app.get("/api/dataForChart", async (req, res) => {
+  try {
+    let pool = await sql.connect(config);
+    let result = await pool.request()
+      .query(`SELECT FechaMovimiento, SUM(Cantidad) as TotalCantidad
+              FROM MovimientosInventario
+              GROUP BY FechaMovimiento
+              ORDER BY FechaMovimiento`);
+    res.json(result.recordset);
+  } catch (err) {
+    console.error("SQL error", err);
+    res.status(500).send("Error del servidor");
+  }
+});
+
+
+
+
 
 // Middleware de autenticación
 function authenticateToken(req, res, next) {
