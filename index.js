@@ -523,11 +523,9 @@ app.post("/api/login", async (req, res) => {
 
     // Validar entrada
     if (!Usuario || !Contraseña) {
-      return res
-        .status(400)
-        .json({
-          message: "El nombre de usuario y la contraseña son obligatorios.",
-        });
+      return res.status(400).json({
+        message: "El nombre de usuario y la contraseña son obligatorios.",
+      });
     }
 
     let pool = await sql.connect(config);
@@ -546,6 +544,13 @@ app.post("/api/login", async (req, res) => {
 
     const user = result.recordset[0];
 
+    // Verificar si el usuario está inactivo
+    if (user.Estado === "Inactivo") {
+      return res
+        .status(403)
+        .json({ message: "Acceso denegado, usuario inactivo." });
+    }
+
     // Comparar contraseñas
     const match = await bcrypt.compare(Contraseña, user.Contraseña);
 
@@ -555,7 +560,11 @@ app.post("/api/login", async (req, res) => {
 
     // Generar token JWT
     const token = jwt.sign(
-      { IdUsuario: user.IdUsuario, Usuario: user.Usuario, IdRol: user.IdRol },
+      {
+        IdUsuario: user.IdUsuario,
+        Usuario: user.Usuario,
+        IdRol: user.IdRol,
+      },
       process.env.JWT_SECRET,
       { expiresIn: "1h" }
     );
