@@ -696,7 +696,33 @@ app.post("/api/movimientos", async (req, res) => {
       `);
 
     // Emitir el evento a todos los clientes conectados
-    io.emit('dataUpdate', result.recordset);
+    io.emit('movimientosxdia', result.recordset);
+
+    if (TipoMovimiento === "Salida") {
+        let result = await pool.request()
+        .query(`
+          SELECT CAST(FechaMovimiento AS DATE) AS FechaMovimiento, SUM(Cantidad) AS TotalCantidad
+          FROM MovimientosInventario
+          WHERE TipoMovimiento = 'Salida'
+          GROUP BY CAST(FechaMovimiento AS DATE)
+          ORDER BY CAST(FechaMovimiento AS DATE)
+        `);
+  
+      // Emitir el evento a todos los clientes conectados
+      io.emit('salidasxdia', result.recordset);
+    } else if (TipoMovimiento === "Entrada") {
+        let result = await pool.request()
+        .query(`
+          SELECT CAST(FechaMovimiento AS DATE) AS FechaMovimiento, SUM(Cantidad) AS TotalCantidad
+          FROM MovimientosInventario
+          WHERE TipoMovimiento = 'Entrada'
+          GROUP BY CAST(FechaMovimiento AS DATE)
+          ORDER BY CAST(FechaMovimiento AS DATE)
+        `);
+  
+      
+      io.emit('entradasxdia', result.recordset);
+}
 
   } catch (err) {
     console.error("SQL error", err);
@@ -1061,7 +1087,7 @@ app.post(
 //Endpoints para Gráficas:
 
 
-app.get("/api/dataForChart", authenticateToken, async (req, res) => {
+app.get("/api/charts/movimientosxdia", authenticateToken, async (req, res) => {
   try {
     let pool = await sql.connect(config);
     let result = await pool.request()
@@ -1076,6 +1102,37 @@ app.get("/api/dataForChart", authenticateToken, async (req, res) => {
   }
 });
 
+app.get("/api/charts/salidasxdia", authenticateToken, async (req, res) => {
+  try {
+    let pool = await sql.connect(config);
+    let result = await pool.request()
+    .query(`SELECT CAST(FechaMovimiento AS DATE) AS FechaMovimiento, SUM(Cantidad) AS TotalCantidad
+            FROM MovimientosInventario 
+            WHERE TipoMovimiento = 'Salida'
+            GROUP BY CAST(FechaMovimiento AS DATE)
+            ORDER BY CAST(FechaMovimiento AS DATE)`);
+    res.json(result.recordset);
+  } catch (err) {
+    console.error("SQL error", err);
+    res.status(500).send("Error del servidor");
+  }
+});
+
+app.get("/api/charts/entradasxdia", authenticateToken, async (req, res) => {
+  try {
+    let pool = await sql.connect(config);
+    let result = await pool.request()
+    .query(`SELECT CAST(FechaMovimiento AS DATE) AS FechaMovimiento, SUM(Cantidad) AS TotalCantidad
+            FROM MovimientosInventario 
+            WHERE TipoMovimiento = 'Entrada'
+            GROUP BY CAST(FechaMovimiento AS DATE)
+            ORDER BY CAST(FechaMovimiento AS DATE)`);
+    res.json(result.recordset);
+  } catch (err) {
+    console.error("SQL error", err);
+    res.status(500).send("Error del servidor");
+  }
+});
 
 
 
