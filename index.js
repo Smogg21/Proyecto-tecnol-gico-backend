@@ -3,11 +3,22 @@ const sql = require("mssql");
 const cors = require("cors");
 const jwt = require("jsonwebtoken");
 const bcrypt = require("bcrypt");
+const http = require('http');
 require("dotenv").config();
 
 const app = express();
 app.use(cors()); // Permitir solicitudes desde el frontend de React
 app.use(express.json()); // Analizar solicitudes JSON entrantes
+const server = http.createServer(app);
+const { Server } = require('socket.io');
+
+const io = new Server(server, {
+  cors: {
+    origin: "http://localhost:5173", // Reemplaza con la URL de tu frontend
+    methods: ["GET", "POST"],
+    credentials: true
+  }
+});
 
 const config = {
   user: process.env.DB_USER,
@@ -19,6 +30,14 @@ const config = {
     trustServerCertificate: process.env.DB_TRUST_SERVER_CERTIFICATE === "true", // Convertir a booleano
   },
 };
+
+io.on('connection', (socket) => {
+  console.log(`Usuario conectado: ${socket.user.Usuario}`); // Usuario es un campo en tu token JWT
+
+  socket.on('disconnect', () => {
+    console.log(`Usuario desconectado: ${socket.user.Usuario}`);
+  });
+});
 
 function authorizeRoles(...allowedRoles) {
   return (req, res, next) => {
@@ -666,6 +685,19 @@ app.post("/api/movimientos", async (req, res) => {
 
     // Enviar de vuelta el IdMovimiento creado
     res.status(201).json({ IdMovimiento });
+
+    // Después de insertar el movimiento, obtener los datos actualizados
+    let result = await pool.request()
+      .query(`
+        SELECT CAST(FechaMovimiento AS DATE) AS FechaMovimiento, SUM(Cantidad) AS TotalCantidad
+        FROM MovimientosInventario
+        GROUP BY CAST(FechaMovimiento AS DATE)
+        ORDER BY CAST(FechaMovimiento AS DATE)
+      `);
+
+    // Emitir el evento a todos los clientes conectados
+    io.emit('dataUpdate', result.recordset);
+
   } catch (err) {
     console.error("SQL error", err);
     res.status(500).send("Error del servidor");
@@ -1029,14 +1061,14 @@ app.post(
 //Endpoints para Gráficas:
 
 
-app.get("/api/dataForChart", async (req, res) => {
+app.get("/api/dataForChart", authenticateToken, async (req, res) => {
   try {
     let pool = await sql.connect(config);
     let result = await pool.request()
-      .query(`SELECT FechaMovimiento, SUM(Cantidad) as TotalCantidad
-              FROM MovimientosInventario
-              GROUP BY FechaMovimiento
-              ORDER BY FechaMovimiento`);
+    .query(`SELECT CAST(FechaMovimiento AS DATE) AS FechaMovimiento, SUM(Cantidad) AS TotalCantidad
+            FROM MovimientosInventario
+            GROUP BY CAST(FechaMovimiento AS DATE)
+            ORDER BY CAST(FechaMovimiento AS DATE)`);
     res.json(result.recordset);
   } catch (err) {
     console.error("SQL error", err);
@@ -1066,7 +1098,25 @@ function authenticateToken(req, res, next) {
   });
 }
 
+io.use((socket, next) => {
+  const token = socket.handshake.auth.token;
+
+  if (!token) {
+    console.log('Token no proporcionado en Socket.IO');
+    return next(new Error('Token no proporcionado'));
+  }
+
+  jwt.verify(token, process.env.JWT_SECRET, (err, user) => {
+    if (err) {
+      console.log('Token inválido en Socket.IO');
+      return next(new Error('Token inválido'));
+    }
+    socket.user = user; // Guarda la información del usuario en el socket
+    next();
+  });
+});
+
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => {
+server.listen(PORT, () => {
   console.log(`Servidor corriendo en el puerto ${PORT}`);
 });
