@@ -23,7 +23,7 @@ const io = new Server(server, {
 const config = {
   user: process.env.DB_USER,
   password: process.env.DB_PASSWORD,
-  server: process.env.DB_SERVER, // Por ejemplo: 'localhost'
+  server: process.env.DB_SERVER, 
   database: process.env.DB_DATABASE,
   options: {
     encrypt: process.env.DB_ENCRYPT === "true", // Convertir a booleano
@@ -552,6 +552,27 @@ app.post("/api/lotes", async (req, res) => {
     `);
     io.emit("caducidadLotes", result.recordset);
 
+    result = await pool.request().query(`
+      SELECT 
+          l.IdLote, 
+          p.Nombre + ' (Lote ' + CAST(l.IdLote AS VARCHAR) + ')' AS NombreProductoLote,
+          l.FechaEntrada, 
+          l.FechaCaducidad,
+          DATEDIFF(DAY, GETDATE(), l.FechaCaducidad) AS DiasParaVencer,
+          l.CantidadActual
+        FROM Lotes l
+        INNER JOIN Productos p ON p.IdProducto = l.IdProducto
+        WHERE 
+          l.FechaCaducidad IS NOT NULL
+          AND l.FechaCaducidad >= CAST(GETDATE() AS DATE)
+          AND l.FechaCaducidad <= DATEADD(DAY, 30, CAST(GETDATE() AS DATE))
+          AND l.CantidadActual > 0
+        ORDER BY l.FechaCaducidad ASC
+    `);
+    io.emit("productosPorVencerActualizados", result.recordset);
+
+    
+
   } catch (err) {
     console.error("SQL error", err);
     // Manejo de errores de clave duplicada (número de serie repetido)
@@ -745,6 +766,7 @@ app.post("/api/movimientos", async (req, res) => {
 
     // Emitir el evento con los lotes actualizados
     io.emit("lotesActualizados", lotesResult.recordset);
+
 
     if (TipoMovimiento === "Salida") {
       let result = await pool.request().query(`
@@ -1232,6 +1254,35 @@ app.get("/api/charts/caducidadlotes", authenticateToken, async (req, res) => {
         INNER JOIN Productos p ON p.IdProducto = l.IdProducto
         WHERE l.FechaCaducidad IS NOT NULL;
         `);
+    res.json(result.recordset);
+  } catch (err) {
+    console.error("SQL error", err);
+    res.status(500).send("Error del servidor");
+  }
+});
+
+
+app.get("/api/charts/productosPorVencer", authenticateToken, async (req, res) => {
+  try {
+    let pool = await sql.connect(config);
+    let result = await pool.request()
+      .query(`
+        SELECT 
+          l.IdLote, 
+          p.Nombre + ' (Lote ' + CAST(l.IdLote AS VARCHAR) + ')' AS NombreProductoLote,
+          l.FechaEntrada, 
+          l.FechaCaducidad,
+          DATEDIFF(DAY, GETDATE(), l.FechaCaducidad) AS DiasParaVencer,
+          l.CantidadActual
+        FROM Lotes l
+        INNER JOIN Productos p ON p.IdProducto = l.IdProducto
+        WHERE 
+          l.FechaCaducidad IS NOT NULL
+          AND l.FechaCaducidad >= CAST(GETDATE() AS DATE)
+          AND l.FechaCaducidad <= DATEADD(DAY, 30, CAST(GETDATE() AS DATE))
+          AND l.CantidadActual > 0
+        ORDER BY l.FechaCaducidad ASC
+      `);
     res.json(result.recordset);
   } catch (err) {
     console.error("SQL error", err);
