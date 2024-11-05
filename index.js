@@ -518,6 +518,40 @@ app.post("/api/lotes", async (req, res) => {
 
     // Enviar de vuelta el IdLote creado
     res.status(201).json({ IdLote });
+
+    result = await pool.request().query(`
+      SELECT CAST(FechaMovimiento AS DATE) AS FechaMovimiento, SUM(Cantidad) AS TotalCantidad
+      FROM MovimientosInventario
+      GROUP BY CAST(FechaMovimiento AS DATE)
+      ORDER BY CAST(FechaMovimiento AS DATE)
+    `);
+
+    // Emitir el evento a todos los clientes conectados
+    io.emit("movimientosxdia", result.recordset);
+
+    result = await pool.request().query(`
+      SELECT CAST(FechaMovimiento AS DATE) AS FechaMovimiento, SUM(Cantidad) AS TotalCantidad
+      FROM MovimientosInventario
+      WHERE TipoMovimiento = 'Entrada'
+      GROUP BY CAST(FechaMovimiento AS DATE)
+      ORDER BY CAST(FechaMovimiento AS DATE)
+    `);
+
+    io.emit("entradasxdia", result.recordset);
+
+    result = await pool.request().query(`
+      SELECT * FROM vw_Lotes
+    `);
+    io.emit("lotesActualizados", result.recordset);
+
+    result = await pool.request().query(`
+      SELECT l.IdLote, p.Nombre, l.FechaEntrada, l.FechaCaducidad
+        FROM Lotes l
+        INNER JOIN Productos p ON p.IdProducto = l.IdProducto
+        WHERE l.FechaCaducidad IS NOT NULL;
+    `);
+    io.emit("caducidadLotes", result.recordset);
+
   } catch (err) {
     console.error("SQL error", err);
     // Manejo de errores de clave duplicada (número de serie repetido)
@@ -868,32 +902,25 @@ app.put(
 
       // Validar tipos de datos
       if (typeof usuario !== "string" || usuario.trim() === "") {
-        return res
-          .status(400)
-          .json({
-            message:
-              'El campo "usuario" debe ser una cadena de texto no vacía.',
-          });
+        return res.status(400).json({
+          message: 'El campo "usuario" debe ser una cadena de texto no vacía.',
+        });
       }
 
       if (typeof nombre !== "string" || nombre.trim() === "") {
-        return res
-          .status(400)
-          .json({
-            message: 'El campo "nombre" debe ser una cadena de texto no vacía.',
-          });
+        return res.status(400).json({
+          message: 'El campo "nombre" debe ser una cadena de texto no vacía.',
+        });
       }
 
       if (
         typeof apellidoPaterno !== "string" ||
         apellidoPaterno.trim() === ""
       ) {
-        return res
-          .status(400)
-          .json({
-            message:
-              'El campo "apellidoPaterno" debe ser una cadena de texto no vacía.',
-          });
+        return res.status(400).json({
+          message:
+            'El campo "apellidoPaterno" debe ser una cadena de texto no vacía.',
+        });
       }
 
       // Validar IdRol
@@ -936,11 +963,9 @@ app.put(
         );
 
       if (usuarioExistente.recordset.length > 0) {
-        return res
-          .status(400)
-          .json({
-            message: "El nombre de usuario ya está en uso por otro usuario.",
-          });
+        return res.status(400).json({
+          message: "El nombre de usuario ya está en uso por otro usuario.",
+        });
       }
 
       // Actualizar datos del usuario
@@ -1191,6 +1216,22 @@ app.get("/api/charts/lotesactuales", authenticateToken, async (req, res) => {
   try {
     let pool = await sql.connect(config);
     let result = await pool.request().query(`SELECT * FROM vw_Lotes`);
+    res.json(result.recordset);
+  } catch (err) {
+    console.error("SQL error", err);
+    res.status(500).send("Error del servidor");
+  }
+});
+
+app.get("/api/charts/caducidadlotes", authenticateToken, async (req, res) => {
+  try {
+    let pool = await sql.connect(config);
+    let result = await pool.request()
+      .query(`SELECT l.IdLote, p.Nombre, l.FechaEntrada, l.FechaCaducidad
+        FROM Lotes l
+        INNER JOIN Productos p ON p.IdProducto = l.IdProducto
+        WHERE l.FechaCaducidad IS NOT NULL;
+        `);
     res.json(result.recordset);
   } catch (err) {
     console.error("SQL error", err);
