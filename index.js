@@ -571,6 +571,21 @@ app.post("/api/lotes", async (req, res) => {
     `);
     io.emit("productosPorVencerActualizados", result.recordset);
 
+
+    result = await pool.request().query(`
+      SELECT 
+        p.IdProducto,
+        p.Nombre,
+        SUM(l.CantidadActual) AS StockActual,
+        p.StockMinimo,
+        (p.StockMinimo - SUM(l.CantidadActual)) AS Diferencia
+      FROM Productos p
+      INNER JOIN Lotes l ON p.IdProducto = l.IdProducto
+      GROUP BY p.IdProducto, p.Nombre, p.StockMinimo
+      HAVING SUM(l.CantidadActual) < p.StockMinimo
+      ORDER BY Diferencia DESC
+    `);
+    io.emit("productosBajoStockMinimoActualizados", result.recordset);
     
 
   } catch (err) {
@@ -758,6 +773,21 @@ app.post("/api/movimientos", async (req, res) => {
 
     // Emitir el evento a todos los clientes conectados
     io.emit("movimientosxdia", result.recordset);
+
+    let resultBajoStock = await pool.request().query(`
+      SELECT 
+        p.IdProducto,
+        p.Nombre,
+        SUM(l.CantidadActual) AS StockActual,
+        p.StockMinimo,
+        (p.StockMinimo - SUM(l.CantidadActual)) AS Diferencia
+      FROM Productos p
+      INNER JOIN Lotes l ON p.IdProducto = l.IdProducto
+      GROUP BY p.IdProducto, p.Nombre, p.StockMinimo
+      HAVING SUM(l.CantidadActual) < p.StockMinimo
+      ORDER BY Diferencia DESC
+    `);
+    io.emit("productosBajoStockMinimoActualizados", resultBajoStock.recordset);
 
     let lotesResult = await pool.request()
       .query(`SELECT l.IdLote, p.Nombre, p.IdProducto, l.CantidadInicial, l.CantidadActual, l.FechaCaducidad, l.FechaEntrada, l.IdUsuario, p.HasNumSerie
@@ -1289,6 +1319,30 @@ app.get("/api/charts/productosPorVencer", authenticateToken, async (req, res) =>
     res.status(500).send("Error del servidor");
   }
 });
+
+app.get("/api/charts/productosBajoStockMinimo", authenticateToken, async (req, res) => {
+  try {
+    let pool = await sql.connect(config);
+    let result = await pool.request().query(`
+      SELECT 
+        p.IdProducto,
+        p.Nombre,
+        SUM(l.CantidadActual) AS StockActual,
+        p.StockMinimo,
+        (p.StockMinimo - SUM(l.CantidadActual)) AS Diferencia
+      FROM Productos p
+      INNER JOIN Lotes l ON p.IdProducto = l.IdProducto
+      GROUP BY p.IdProducto, p.Nombre, p.StockMinimo
+      HAVING SUM(l.CantidadActual) < p.StockMinimo
+      ORDER BY Diferencia DESC
+    `);
+    res.json(result.recordset);
+  } catch (err) {
+    console.error("SQL error", err);
+    res.status(500).send("Error del servidor");
+  }
+});
+
 
 // Middleware de autenticación
 function authenticateToken(req, res, next) {
