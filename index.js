@@ -1343,6 +1343,57 @@ app.get("/api/charts/productosBajoStockMinimo", authenticateToken, async (req, r
   }
 });
 
+// Endpoint para obtener el KARDEX de un producto específico
+// Endpoint para obtener el KARDEX de un producto específico con saldo acumulado
+app.get('/api/productos/:id/kardex', authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    let pool = await sql.connect(config);
+    let request = pool.request();
+    request.input('IdProducto', sql.Int, id);
+
+    const query = `
+      SELECT
+        MI.IdMovimiento,
+        MI.FechaMovimiento,
+        MI.TipoMovimiento,
+        MI.Cantidad,
+        MI.Notas,
+        MI.NumSerie,
+        L.IdLote,
+        P.IdProducto,
+        P.Nombre AS NombreProducto,
+        -- Cálculo del saldo acumulado
+        SUM(
+          CASE 
+            WHEN MI.TipoMovimiento = 'Entrada' THEN MI.Cantidad
+            WHEN MI.TipoMovimiento = 'Salida' THEN -MI.Cantidad
+            ELSE 0
+          END
+        ) OVER (
+          ORDER BY MI.FechaMovimiento, MI.IdMovimiento
+          ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+        ) AS Saldo
+      FROM
+        MovimientosInventario MI
+        INNER JOIN Lotes L ON MI.IdLote = L.IdLote
+        INNER JOIN Productos P ON L.IdProducto = P.IdProducto
+      WHERE
+        P.IdProducto = @IdProducto
+      ORDER BY
+        MI.FechaMovimiento, MI.IdMovimiento;
+    `;
+
+    let result = await request.query(query);
+
+    res.json(result.recordset);
+  } catch (err) {
+    console.error("Error al obtener el KARDEX del producto", err);
+    res.status(500).send("Error del servidor");
+  }
+});
+
+
 
 // Middleware de autenticación
 function authenticateToken(req, res, next) {
