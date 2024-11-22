@@ -31,13 +31,6 @@ const config = {
   },
 };
 
-io.on("connection", (socket) => {
-  console.log(`Usuario conectado: ${socket.user.Usuario}`); // Usuario es un campo en tu token JWT
-
-  socket.on("disconnect", () => {
-    console.log(`Usuario desconectado: ${socket.user.Usuario}`);
-  });
-});
 
 function authorizeRoles(...allowedRoles) {
   return (req, res, next) => {
@@ -603,6 +596,7 @@ app.post("/api/lotes", async (req, res) => {
 
 // Endpoint para registrar un movimiento de inventario
 app.post("/api/movimientos", async (req, res) => {
+  
   try {
     // Extraer campos del cuerpo de la solicitud
     const { IdLote, TipoMovimiento, Cantidad, Notas, IdUsuario, NumSerie } =
