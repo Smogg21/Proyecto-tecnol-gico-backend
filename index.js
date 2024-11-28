@@ -48,6 +48,23 @@ function authorizeRoles(...allowedRoles) {
   };
 }
 
+async function isStockStopActive() {
+  try {
+    let pool = await sql.connect(config);
+    let result = await pool.request()
+      .input('Clave', sql.NVarChar(50), 'StockStop')
+      .query('SELECT Valor FROM Configuraciones WHERE Clave = @Clave');
+    if (result.recordset.length > 0) {
+      return result.recordset[0].Valor === 'true';
+    }
+    return false;
+  } catch (err) {
+    console.error('Error checking stock stop status', err);
+    return false; // Asumimos que no está activa en caso de error
+  }
+}
+
+
 // Endpoint para obtener productos
 app.get("/api/productos", async (req, res) => {
   try {
@@ -415,6 +432,11 @@ app.get(
 
 // **Nuevo Endpoint para Insertar un Lote**
 app.post("/api/lotes", async (req, res) => {
+  // Verificar si la Parada de stock está activa
+  if (await isStockStopActive()) {
+    return res.status(403).json({ message: 'No se pueden registrar nuevas entradas mientras la Parada de stock está activa.' });
+  }
+
   try {
     const {
       producto,
@@ -597,6 +619,11 @@ app.post("/api/lotes", async (req, res) => {
 // Endpoint para registrar un movimiento de inventario
 app.post("/api/movimientos", async (req, res) => {
   
+  // Verificar si la Parada de stock está activa
+  if (await isStockStopActive()) {
+    return res.status(403).json({ message: 'No se pueden registrar movimientos mientras la Parada de stock está activa.' });
+  }
+
   try {
     // Extraer campos del cuerpo de la solicitud
     const { IdLote, TipoMovimiento, Cantidad, Notas, IdUsuario, NumSerie } =
@@ -1428,4 +1455,66 @@ io.use((socket, next) => {
 const PORT = process.env.PORT || 5000;
 server.listen(PORT, () => {
   console.log(`Servidor corriendo en el puerto ${PORT}`);
+});
+
+
+app.get('/api/stock-stop/status', authenticateToken, async (req, res) => {
+  try {
+    const status = await isStockStopActive();
+    res.json({ stockStopActive: status });
+  } catch (err) {
+    console.error('Error obteniendo el estado de la Parada de stock', err);
+    res.status(500).send('Error del servidor');
+  }
+});
+
+app.post('/api/stock-stop/activate', authenticateToken, authorizeRoles(1,2), async (req, res) => {
+  try {
+    let pool = await sql.connect(config);
+    let result = await pool.request()
+      .input('Clave', sql.NVarChar(50), 'StockStop')
+      .input('Valor', sql.NVarChar(50), 'true')
+      .query('UPDATE Configuraciones SET Valor = @Valor WHERE Clave = @Clave');
+
+    // Si no se actualizó ninguna fila, insertamos el registro
+    if (result.rowsAffected[0] === 0) {
+      await pool.request()
+        .input('Clave', sql.NVarChar(50), 'StockStop')
+        .input('Valor', sql.NVarChar(50), 'true')
+        .query('INSERT INTO Configuraciones (Clave, Valor) VALUES (@Clave, @Valor)');
+    }
+
+    // Emitir evento a través de Socket.IO
+    io.emit('stockStopActivated', { time: new Date().toISOString() });
+    res.json({ message: 'Parada de stock activada' });
+  } catch (err) {
+    console.error('Error activando la Parada de stock', err);
+    res.status(500).send('Error del servidor');
+  }
+});
+
+
+app.post('/api/stock-stop/deactivate', authenticateToken, authorizeRoles(1,2), async (req, res) => {
+  try {
+    let pool = await sql.connect(config);
+    let result = await pool.request()
+      .input('Clave', sql.NVarChar(50), 'StockStop')
+      .input('Valor', sql.NVarChar(50), 'false')
+      .query('UPDATE Configuraciones SET Valor = @Valor WHERE Clave = @Clave');
+
+    // Si no se actualizó ninguna fila, insertamos el registro
+    if (result.rowsAffected[0] === 0) {
+      await pool.request()
+        .input('Clave', sql.NVarChar(50), 'StockStop')
+        .input('Valor', sql.NVarChar(50), 'false')
+        .query('INSERT INTO Configuraciones (Clave, Valor) VALUES (@Clave, @Valor)');
+    }
+
+    // Emitir evento a través de Socket.IO
+    io.emit('stockStopDeactivated', { time: new Date().toISOString() });
+    res.json({ message: 'Parada de stock desactivada' });
+  } catch (err) {
+    console.error('Error desactivando la Parada de stock', err);
+    res.status(500).send('Error del servidor');
+  }
 });
