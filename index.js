@@ -1365,14 +1365,51 @@ app.get("/api/charts/productosBajoStockMinimo", authenticateToken, async (req, r
 });
 
 // Endpoint para obtener el KARDEX de un producto específico
-// Endpoint para obtener el KARDEX de un producto específico con saldo acumulado
+// Endpoint para obtener el KARDEX de un producto específico con filtrado por fechas
 app.get('/api/productos/:id/kardex', authenticateToken, async (req, res) => {
   try {
     const { id } = req.params;
+    const { startDate, endDate } = req.query;
     let pool = await sql.connect(config);
     let request = pool.request();
     request.input('IdProducto', sql.Int, id);
+    
+    let dateFilter = '';
+    let saldoInicial = 0; // Inicializar saldoInicial a 0
 
+    // Calcular saldoInicial solo si se proporciona startDate
+    if (startDate) {
+      request.input('StartDate', sql.DateTime, new Date(startDate));
+      dateFilter += ' AND MI.FechaMovimiento >= @StartDate';
+
+      const saldoInicialQuery = `
+        SELECT 
+          SUM(
+            CASE 
+              WHEN MI.TipoMovimiento = 'Entrada' THEN MI.Cantidad
+              WHEN MI.TipoMovimiento = 'Salida' THEN -MI.Cantidad
+              ELSE 0
+            END
+          ) AS SaldoInicial
+        FROM
+          MovimientosInventario MI
+          INNER JOIN Lotes L ON MI.IdLote = L.IdLote
+        WHERE
+          L.IdProducto = @IdProducto
+          AND MI.FechaMovimiento < @StartDate
+      `;
+      
+      const saldoInicialResult = await request.query(saldoInicialQuery);
+      saldoInicial = saldoInicialResult.recordset[0].SaldoInicial || 0;
+    }
+
+    // Agregar condiciones de endDate si se proporciona
+    if (endDate) {
+      request.input('EndDate', sql.DateTime, new Date(endDate));
+      dateFilter += ' AND MI.FechaMovimiento <= @EndDate';
+    }
+    
+    // Obtener los movimientos filtrados
     const query = `
       SELECT
         MI.IdMovimiento,
@@ -1385,7 +1422,7 @@ app.get('/api/productos/:id/kardex', authenticateToken, async (req, res) => {
         P.IdProducto,
         P.Nombre AS NombreProducto,
         -- Cálculo del saldo acumulado
-        SUM(
+        @SaldoInicial + SUM(
           CASE 
             WHEN MI.TipoMovimiento = 'Entrada' THEN MI.Cantidad
             WHEN MI.TipoMovimiento = 'Salida' THEN -MI.Cantidad
@@ -1401,10 +1438,14 @@ app.get('/api/productos/:id/kardex', authenticateToken, async (req, res) => {
         INNER JOIN Productos P ON L.IdProducto = P.IdProducto
       WHERE
         P.IdProducto = @IdProducto
+        ${dateFilter}
       ORDER BY
         MI.FechaMovimiento, MI.IdMovimiento;
     `;
-
+    
+    // Añadir el saldo inicial como parámetro
+    request.input('SaldoInicial', sql.Int, saldoInicial);
+    
     let result = await request.query(query);
 
     res.json(result.recordset);
@@ -1414,6 +1455,88 @@ app.get('/api/productos/:id/kardex', authenticateToken, async (req, res) => {
   }
 });
 
+// Endpoint para obtener el saldo inicial antes del rango de fechas
+app.get('/api/productos/:id/saldoInicial', authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { startDate } = req.query;
+    let pool = await sql.connect(config);
+    let request = pool.request();
+    request.input('IdProducto', sql.Int, id);
+    request.input('StartDate', sql.DateTime, new Date(startDate));
+
+    const saldoQuery = `
+      SELECT 
+        SUM(
+          CASE 
+            WHEN MI.TipoMovimiento = 'Entrada' THEN MI.Cantidad
+            WHEN MI.TipoMovimiento = 'Salida' THEN -MI.Cantidad
+            ELSE 0
+          END
+        ) AS SaldoInicial
+      FROM
+        MovimientosInventario MI
+        INNER JOIN Lotes L ON MI.IdLote = L.IdLote
+      WHERE
+        L.IdProducto = @IdProducto
+        AND MI.FechaMovimiento < @StartDate
+    `;
+
+    const saldoResult = await request.query(saldoQuery);
+    const saldoInicial = saldoResult.recordset[0].SaldoInicial || 0;
+    res.json({ saldoInicial });
+  } catch (err) {
+    console.error("Error al obtener el saldo inicial", err);
+    res.status(500).send("Error del servidor");
+  }
+});
+
+
+// Endpoint para obtener movimientos de un producto específico para la gráfica con filtrado por fechas
+app.get('/api/productos/:id/movimientos', authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { startDate, endDate } = req.query;
+    let pool = await sql.connect(config);
+    let request = pool.request();
+    request.input('IdProducto', sql.Int, id);
+
+    let dateFilter = '';
+    if (startDate) {
+      request.input('StartDate', sql.DateTime, new Date(startDate));
+      dateFilter += ' AND MI.FechaMovimiento >= @StartDate';
+    }
+    if (endDate) {
+      request.input('EndDate', sql.DateTime, new Date(endDate));
+      dateFilter += ' AND MI.FechaMovimiento <= @EndDate';
+    }
+
+    const query = `
+      SELECT
+        CAST(MI.FechaMovimiento AS DATE) AS FechaMovimiento,
+        SUM(CASE WHEN MI.TipoMovimiento = 'Entrada' THEN MI.Cantidad ELSE 0 END) AS Entradas,
+        SUM(CASE WHEN MI.TipoMovimiento = 'Salida' THEN MI.Cantidad ELSE 0 END) AS Salidas
+      FROM
+        MovimientosInventario MI
+        INNER JOIN Lotes L ON MI.IdLote = L.IdLote
+        INNER JOIN Productos P ON L.IdProducto = P.IdProducto
+      WHERE
+        P.IdProducto = @IdProducto
+        ${dateFilter}
+      GROUP BY
+        CAST(MI.FechaMovimiento AS DATE)
+      ORDER BY
+        CAST(MI.FechaMovimiento AS DATE);
+    `;
+
+    let result = await request.query(query);
+
+    res.json(result.recordset);
+  } catch (err) {
+    console.error("Error al obtener los movimientos para la gráfica", err);
+    res.status(500).send("Error del servidor");
+  }
+});
 
 
 // Middleware de autenticación
