@@ -14,7 +14,7 @@ const { Server } = require("socket.io");
 
 const io = new Server(server, {
   cors: {
-    origin: "http://localhost:5173", // Reemplaza con la URL de tu frontend
+    origin: "https://proyecto-tecnologico-frontend.vercel.app", // Reemplaza con la URL de tu frontend
     methods: ["GET", "POST"],
     credentials: true,
   },
