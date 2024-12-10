@@ -65,6 +65,12 @@ async function isStockStopActive() {
 }
 
 
+// Ruta de índice que saluda con "Hola!"
+app.get('/', (req, res) => {
+  res.send('Hola!');
+});
+
+
 // Endpoint para obtener productos
 app.get("/api/productos", async (req, res) => {
   try {
